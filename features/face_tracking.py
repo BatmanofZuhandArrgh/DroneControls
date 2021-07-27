@@ -13,14 +13,14 @@ class FaceTracker(Controls):
     def __init__(self):
         super(FaceTracker, self).__init__()
         self.area_to_stabilize = (25000, 30000)
-        self.height = 0
-        self.width = 0
+        self.height = 720
+        self.width = 960
 
-        self.seg_height = 0
-        self.seg_width = 0
-
-        self.area_of_face = 0
-        self.face_coords = 0
+        self.upper_limit = int(self.height//3)
+        self.lower_limit = self.upper_limit * 2
+        
+        self.rightmost_limit = int(self.width//3)
+        self.leftmost_limit = self.rightmost_limit*2
         
     def run(self):
         self.start_up()
@@ -36,24 +36,14 @@ class FaceTracker(Controls):
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         should_stop = True
-
-            #TODO finish condition to move
             
-
             if frame_read.stopped:
                 break
 
             self.screen.fill([0, 0, 0])
             self.update()
 
-            frame = frame_read.frame
-
-            self.height, self.width = frame.shape
-            self.seg_height = int(self.height//3)
-            self.seg_width = int(self.width//3)
-
-            print(frame.shape, self.seg_height, self.seg_width)
-            
+            frame = frame_read.frame                
 
             text = "Battery: {}%".format(self.tello.get_battery())
             cv2.putText(frame, text, (5, 720 - 5),
@@ -62,12 +52,49 @@ class FaceTracker(Controls):
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
             frame, [self.face_coords, self.area] = findFace(frame)
-            cv2.putText(img = frame, text = f'{face_coords}_{area}', 
+            
+            #Move in left right up down
+            if(self.face_coords == [0,0]):
+                print('nothing`')
+                continue
+            else:
+                if(self.face_coords[1] < self.upper_limit):
+                    print('down')
+                elif(self.face_coords[1] > self.lower_limit):
+                    print('up')
+                else:
+                    print('center')
+
+                if(self.face_coords[0] < self.rightmost_limit):
+                    print('move_left')
+                elif(self.face_coords[0] > self.leftmost_limit):
+                    print('move_right')
+                else:
+                    print('center')
+            
+            #Move forward, backward
+            if(self.area == 0):
+                continue
+            else:
+                if(self.area > self.area_to_stabilize[-1]):
+                    print('move backwards')
+                elif(self.area < self.area_to_stabilize[0]):
+                    print('move forwards')
+                else:
+                    print('stationary')
+            
+
+            #Draw grid
+            cv2.line(frame, (0,self.lower_limit),(self.width, self.lower_limit), (255, 0, 0), 1, 1)
+            cv2.line(frame, (0,self.upper_limit),(self.width, self.upper_limit), (255, 0, 0), 1, 1)
+            
+            cv2.line(frame, (self.rightmost_limit, 0),(self.rightmost_limit, self.height), (255, 0, 0), 1, 1)
+            cv2.line(frame, (self.leftmost_limit, 0),(self.leftmost_limit, self.height), (255, 0, 0), 1, 1)
+
+            cv2.putText(img = frame, text = f'{self.face_coords}_{self.area}', 
                         org = (30,30), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
                         fontScale = 1,color = (0, 0, 255), thickness = 2)
 
-            
-            
 
             frame = np.rot90(frame)
             frame = np.flipud(frame)
@@ -165,6 +192,8 @@ def webcam_findFace():
         print('cannot open camera')
         exit()
 
+    AREA_THRESHOLD = [25000, 30000]
+
     while True:
         _, img = cap.read()
         
@@ -172,6 +201,42 @@ def webcam_findFace():
         cv2.putText(img = img, text = f'{face_coords}_{area}', 
                     org = (30,30), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
                     fontScale = 1,color = (0, 0, 255), thickness = 2)
+        
+        cv2.circle(img, tuple(face_coords), 1, (255,0,0), 2,2)
+
+        upper_limit = int(img.shape[0]/3)
+        lower_limit = int(img.shape[0]/3)*2
+        cv2.line(img, (0,int(img.shape[0]/3)),(img.shape[1], int(img.shape[0]/3)), (255, 0, 0), 1, 1)
+        cv2.line(img, (0,int(img.shape[0]/3*2)),(img.shape[1], int(img.shape[0]/3*2)), (255, 0, 0), 1, 1)
+
+        rightmost_limit = int(img.shape[1]/3)
+        leftmost_limit =  int(img.shape[1]/3) * 2
+        cv2.line(img, (int(img.shape[1]/3), 0),(int(img.shape[1]/3), img.shape[0]), (255, 0, 0), 1, 1)
+        cv2.line(img, (int(img.shape[1]/3*2), 0),(int(img.shape[1]/3*2), img.shape[0]), (255, 0, 0), 1, 1)
+
+        if(face_coords == [0,0]):
+            continue
+        else:
+            if(face_coords[1] < upper_limit):
+                print('down')
+            elif(face_coords[1] > lower_limit):
+                print('up')
+
+            if(face_coords[0] < rightmost_limit):
+                print('move_left')
+            elif(face_coords[0] > leftmost_limit):
+                print('move_right')
+
+        if(area == 0):
+            continue
+        else:
+            if(area > AREA_THRESHOLD[-1]):
+                print('move backwards')
+            elif(area < AREA_THRESHOLD[0]):
+                print('move forwards')
+            else:
+                print('stationary')
+            
         cv2.imshow("Output", img)
 
         press = cv2.waitKey(1)
@@ -180,10 +245,11 @@ def webcam_findFace():
             break
 
 def main():
-    frontend = UserControls()
+    # controls = FaceTracker()
 
     # run frontend
-    frontend.run()
+    # controls.run()
+    webcam_findFace()
 
 
 if __name__ == '__main__':
