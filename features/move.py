@@ -24,10 +24,7 @@ class Controls(object):
         self.tello = Tello()
 
         # Drone velocities between -100~100
-        self.for_back_velocity = 0
-        self.left_right_velocity = 0
-        self.up_down_velocity = 0
-        self.yaw_velocity = 0
+        self.stationary()
         self.speed = 10
 
         self.send_rc_control = False
@@ -40,7 +37,7 @@ class Controls(object):
 
         # create update timer
         pygame.time.set_timer(pygame.USEREVENT + 1, 1000 // self.FPS)
-    
+
     def start_up(self):
         self.tello.connect()
         self.tello.set_speed(self.speed)
@@ -48,6 +45,12 @@ class Controls(object):
         # In case streaming is on. This happens when we quit this program without the escape key.
         self.tello.streamoff()
         self.tello.streamon()
+
+    def stationary(self):
+        self.for_back_velocity = 0
+        self.left_right_velocity = 0
+        self.up_down_velocity = 0
+        self.yaw_velocity = 0
 
     def run(self):
         #Should start a loop to 
