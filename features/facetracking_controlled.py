@@ -10,7 +10,7 @@ import mediapipe as mp
 mp_face_detection = mp.solutions.face_detection
 mp_drawing = mp.solutions.drawing_utils
 
-MOUTH2NOSE_DISTANCE_THRESHOLD = [40, 50] #pixels
+MOUTH2NOSE_DISTANCE_THRESHOLD = [35, 45] #pixels
 
 class FaceTracker(Controls):
     """ 
@@ -55,7 +55,7 @@ class FaceTracker(Controls):
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
             with mp_face_detection.FaceDetection(
-                model_selection=0, min_detection_confidence=0.8) as face_detection:
+                model_selection=0, min_detection_confidence=0.6) as face_detection:
 
                 # Flip the image horizontally for a later selfie-view display, and convert
                 # the BGR image to RGB.
@@ -94,11 +94,11 @@ class FaceTracker(Controls):
                         cv2.line(frame, (0,lower_limit),(width, lower_limit), (255, 0, 0), 1, 1)
                         
                         if(nose_y < upper_limit):
-                            output_text.append('down')
-                            self.up_down_velocity = -self.S
-                        elif(nose_y > lower_limit):
                             output_text.append('up')
                             self.up_down_velocity = self.S
+                        elif(nose_y > lower_limit):
+                            output_text.append('down')
+                            self.up_down_velocity = -self.S
                         else:
                             output_text.append('stable_horizontal')
                             self.up_down_velocity = 0

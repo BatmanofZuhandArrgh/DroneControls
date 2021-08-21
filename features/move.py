@@ -29,12 +29,12 @@ class Controls(object):
 
         # Drone velocities between -100~100
         self.stationary()
-        self.speed = 10
+        self.speed = 20
 
         self.send_rc_control = False
 
         # Speed of the drone
-        self.S = 10
+        self.S = 25
         # Frames per second of the pygame window display
         # A low number also results in input lag, as input information is processed once per frame.
         self.FPS = 120

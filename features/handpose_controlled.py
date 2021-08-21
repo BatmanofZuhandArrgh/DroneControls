@@ -62,7 +62,7 @@ class HandPoseControl(Controls):
 
                 # Flip the image horizontally for a later selfie-view display, and convert
                 # the BGR image to RGB.
-                image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
+                image = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
                 # To improve performance, optionally mark the image as not writeable to
                 # pass by reference.
                 image.flags.writeable = False
@@ -77,8 +77,9 @@ class HandPoseControl(Controls):
                     hand_dict = get_all_point_of_hands(mp_hands, hand_landmarks, image_width, image_height)
 
                     order = get_index_finger_direction(hand_dict)
-                    order += get_thumb_direction(hand_dict)
-                    order += get_ringmid_direction(hand_dict)
+                    
+                    print(get_thumb_direction(hand_dict))
+                    print(get_ringmid_direction(hand_dict))
 
                     if('down' in order):
                         self.up_down_velocity = -self.S
@@ -110,7 +111,7 @@ class HandPoseControl(Controls):
                     self.stationary()
 
             self.update()
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            frame = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
             frame = np.rot90(frame)
             frame = np.flipud(frame)
@@ -407,7 +408,11 @@ def main():
     # image_handpose(glob.glob(f'sample_input/*'))
     
     #Webcam inference
-    webcam_handpose()
+    # webcam_handpose()
+
+    #Drone inference
+    controls = HandPoseControl()
+    controls.run()
 
     pass
 
