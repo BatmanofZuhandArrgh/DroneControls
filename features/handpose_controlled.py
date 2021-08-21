@@ -1,6 +1,10 @@
 import cv2
 import glob as glob
+import pygame
 import mediapipe as mp
+import numpy as np
+import matplotlib.path as mpltPath
+from sklearn.linear_model import LinearRegression
 
 from move import Controls
 
@@ -8,23 +12,14 @@ mp_drawing = mp.solutions.drawing_utils
 mp_hands = mp.solutions.hands
 drawing_styles = mp.solutions.drawing_styles
 
-class HandposeControls(Controls):
+class HandPoseControl(Controls):
     """ 
     Once the drone detect a face it will follow that face, face to face    
     """
 
     def __init__(self):
-        super(HandposeControls, self).__init__()
-        self.area_to_stabilize = (25000, 30000)
-        self.height = 720
-        self.width = 960
+        super(HandPoseControl, self).__init__()
 
-        self.upper_limit = int(self.height//3)
-        self.lower_limit = self.upper_limit * 2
-        
-        self.rightmost_limit = int(self.width//3)
-        self.leftmost_limit = self.rightmost_limit*2
-        
     def run(self):
         self.start_up()
 
@@ -39,6 +34,13 @@ class HandposeControls(Controls):
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         should_stop = True
+                    elif event.key == pygame.K_t:
+                        self.tello.takeoff()
+                        self.send_rc_control = True
+
+                    elif event.key == pygame.K_l:  # land
+                        self.tello.land()
+                        self.send_rc_control = False
             
             if frame_read.stopped:
                 break
@@ -52,52 +54,61 @@ class HandposeControls(Controls):
             cv2.putText(frame, text, (5, 720 - 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            with mp_hands.Hands(
+                max_num_hands = 1,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5) as hands:
 
-            frame, [self.face_coords, self.area] = findFace(frame)
-            
-            #Move in left right up down
-            if(self.face_coords == [0,0]):
-                print('nothing`')
-                continue
-            else:
-                if(self.face_coords[1] < self.upper_limit):
-                    print('down')
-                elif(self.face_coords[1] > self.lower_limit):
-                    print('up')
-                else:
-                    print('center')
+                # Flip the image horizontally for a later selfie-view display, and convert
+                # the BGR image to RGB.
+                image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
+                # To improve performance, optionally mark the image as not writeable to
+                # pass by reference.
+                image.flags.writeable = False
+                image_height, image_width, _ = image.shape
+                results = hands.process(image)
 
-                if(self.face_coords[0] < self.rightmost_limit):
-                    print('move_left')
-                elif(self.face_coords[0] > self.leftmost_limit):
-                    print('move_right')
-                else:
-                    print('center')
-            
-            #Move forward, backward
-            if(self.area == 0):
-                continue
-            else:
-                if(self.area > self.area_to_stabilize[-1]):
-                    print('move backwards')
-                elif(self.area < self.area_to_stabilize[0]):
-                    print('move forwards')
+                # Draw the hand annotations on the image.
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                print('--------------------------')
+                if results.multi_hand_landmarks:
+                    hand_landmarks = results.multi_hand_landmarks[0]
+                    hand_dict = get_all_point_of_hands(mp_hands, hand_landmarks, image_width, image_height)
+
+                    order = get_index_finger_direction(hand_dict)
+                    order += get_thumb_direction(hand_dict)
+
+                    if('down' in order):
+                        self.up_down_velocity = -self.S
+                    elif('up' > order):
+                        self.up_down_velocity = self.S
+                    else:
+                        self.up_down_velocity = 0
+
+                    if('left' in order):
+                        self.left_right_velocity = self.S
+                    elif('right' in order):
+                        self.left_right_velocity = -self.S
+                    else:
+                        self.left_right_velocity = 0
+                        
+
+                    # #Control forward and backward
+                    # if(m2n_distance > MOUTH2NOSE_DISTANCE_THRESHOLD[1]):
+                    #     self.for_back_velocity = -self.S
+                    # elif(m2n_distance < MOUTH2NOSE_DISTANCE_THRESHOLD[0]):
+                    #     self.for_back_velocity = self.S
+                    # else:
+                    #     self.for_back_velocity = 0
+
+                    cv2.putText(img = frame, text = '|'.join(order), 
+                        org = (30,15), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
+                        fontScale = 1,color = (0, 0, 255), thickness = 1)
                 else:
                     print('stationary')
-            
 
-            #Draw grid
-            cv2.line(frame, (0,self.lower_limit),(self.width, self.lower_limit), (255, 0, 0), 1, 1)
-            cv2.line(frame, (0,self.upper_limit),(self.width, self.upper_limit), (255, 0, 0), 1, 1)
-            
-            cv2.line(frame, (self.rightmost_limit, 0),(self.rightmost_limit, self.height), (255, 0, 0), 1, 1)
-            cv2.line(frame, (self.leftmost_limit, 0),(self.leftmost_limit, self.height), (255, 0, 0), 1, 1)
-
-            cv2.putText(img = frame, text = f'{self.face_coords}_{self.area}', 
-                        org = (30,30), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
-                        fontScale = 1,color = (0, 0, 255), thickness = 2)
-
+            self.update()
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
             frame = np.rot90(frame)
             frame = np.flipud(frame)
@@ -112,147 +123,17 @@ class HandposeControls(Controls):
         # Call it always before finishing. To deallocate resources.
         self.tello.end()
 
-    def keydown(self, key):
-        """ Update velocities based on key pressed
-        Arguments:
-            key: pygame key
-        """
-        if key == pygame.K_UP:  # set forward velocity
-            self.for_back_velocity = self.S
-        elif key == pygame.K_DOWN:  # set backward velocity
-            self.for_back_velocity = -self.S
-        elif key == pygame.K_LEFT:  # set left velocity
-            self.left_right_velocity = -self.S
-        elif key == pygame.K_RIGHT:  # set right velocity
-            self.left_right_velocity = self.S
-        elif key == pygame.K_w:  # set up velocity
-            self.up_down_velocity = self.S
-        elif key == pygame.K_s:  # set down velocity
-            self.up_down_velocity = -self.S
-        elif key == pygame.K_a:  # set yaw counter clockwise velocity
-            self.yaw_velocity = -self.S
-        elif key == pygame.K_d:  # set yaw clockwise velocity
-            self.yaw_velocity = self.S
-        elif key == pygame.K_f:
-            self.tello.flip_forward()
-
-    def keyup(self, key):
-        """ Update velocities based on key released
-        Arguments:
-            key: pygame key
-        """
-        if key == pygame.K_UP or key == pygame.K_DOWN:  # set zero forward/backward velocity
-            self.for_back_velocity = 0
-        elif key == pygame.K_LEFT or key == pygame.K_RIGHT:  # set zero left/right velocity
-            self.left_right_velocity = 0
-        elif key == pygame.K_w or key == pygame.K_s:  # set zero up/down velocity
-            self.up_down_velocity = 0
-        elif key == pygame.K_a or key == pygame.K_d:  # set zero yaw velocity
-            self.yaw_velocity = 0
-        elif key == pygame.K_t:  # takeoff
-            self.tello.takeoff()
-            self.send_rc_control = True
-        elif key == pygame.K_l:  # land
-            not self.tello.land()
-            self.send_rc_control = False
-
     def update(self):
         """ Update routine. Send velocities to Tello."""
         if self.send_rc_control:
             self.tello.send_rc_control(self.left_right_velocity, self.for_back_velocity,
                 self.up_down_velocity, self.yaw_velocity)
 
-def findFace(img, mode = 'CascadeClassifier'):
-    if mode == 'CascadeClassifier':
-        faceCascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        imgGray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(imgGray, 1.2, 8)
-    else:
-        faces = []
-
-    face_list = []
-    face_area_list = []
-
-    for (x, y, w, h) in faces:
-        cv2.rectangle(img, (x,y), (x+w, y+h), (0,0,255), 2)
-        cx = x + w // 2
-        cy = y + h // 2
-        area = w*h
-        face_list.append([cx, cy])
-        face_area_list.append(area)
-
-    if len(face_list) != 0:
-        i = face_area_list.index(max(face_area_list))
-        return img, [face_list[i], face_area_list[i]]
-
-    else:
-        return img, [[0,0], [0]]
-
-def webcam_findFace():
-    cap = cv2.VideoCapture(0)
-
-    if not cap.isOpened():
-        print('cannot open camera')
-        exit()
-
-    AREA_THRESHOLD = [25000, 30000]
-
-    while True:
-        _, img = cap.read()
-        
-        img, [face_coords, area] = findFace(img)
-        cv2.putText(img = img, text = f'{face_coords}_{area}', 
-                    org = (30,30), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
-                    fontScale = 1,color = (0, 0, 255), thickness = 2)
-        
-        cv2.circle(img, tuple(face_coords), 1, (255,0,0), 2,2)
-
-        upper_limit = int(img.shape[0]/3)
-        lower_limit = int(img.shape[0]/3)*2
-        cv2.line(img, (0,int(img.shape[0]/3)),(img.shape[1], int(img.shape[0]/3)), (255, 0, 0), 1, 1)
-        cv2.line(img, (0,int(img.shape[0]/3*2)),(img.shape[1], int(img.shape[0]/3*2)), (255, 0, 0), 1, 1)
-
-        rightmost_limit = int(img.shape[1]/3)
-        leftmost_limit =  int(img.shape[1]/3) * 2
-        cv2.line(img, (int(img.shape[1]/3), 0),(int(img.shape[1]/3), img.shape[0]), (255, 0, 0), 1, 1)
-        cv2.line(img, (int(img.shape[1]/3*2), 0),(int(img.shape[1]/3*2), img.shape[0]), (255, 0, 0), 1, 1)
-
-        if(face_coords == [0,0]):
-            continue
-        else:
-            if(face_coords[1] < upper_limit):
-                print('down')
-            elif(face_coords[1] > lower_limit):
-                print('up')
-
-            if(face_coords[0] < rightmost_limit):
-                print('move_left')
-            elif(face_coords[0] > leftmost_limit):
-                print('move_right')
-
-        if(area == 0):
-            continue
-        else:
-            if(area > AREA_THRESHOLD[-1]):
-                print('move backwards')
-            elif(area < AREA_THRESHOLD[0]):
-                print('move forwards')
-            else:
-                print('stationary')
-            
-        cv2.imshow("Output", img)
-
-        press = cv2.waitKey(1)
-        if press == ord('q'):
-            print('Quitting')
-            break
-
-
 def image_handpose(image_files):
     # For static images:
     with mp_hands.Hands(
         static_image_mode=True,
-        max_num_hands=2,
+        max_num_hands=1,
         min_detection_confidence=0.5) as hands:
         for idx, file in enumerate(image_files):
             # Read an image, flip it around y-axis for correct handedness output (see
@@ -286,6 +167,7 @@ def webcam_handpose():
 # For webcam input:
     cap = cv2.VideoCapture(0)
     with mp_hands.Hands(
+        max_num_hands = 1,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5) as hands:
         while cap.isOpened():
@@ -301,25 +183,182 @@ def webcam_handpose():
             # To improve performance, optionally mark the image as not writeable to
             # pass by reference.
             image.flags.writeable = False
+            image_height, image_width, _ = image.shape
             results = hands.process(image)
 
             # Draw the hand annotations on the image.
             image.flags.writeable = True
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            print('--------------------------')
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
+                    print(len(hand_landmarks))
                     mp_drawing.draw_landmarks(
                         image, hand_landmarks, mp_hands.HAND_CONNECTIONS,
                         drawing_styles.get_default_hand_landmark_style(),
                         drawing_styles.get_default_hand_connection_style())
+
+                hand_dict = get_all_point_of_hands(mp_hands, hand_landmarks, image_width, image_height)
+                get_index_finger_direction(hand_dict)
+                get_thumb_direction(hand_dict)
             cv2.imshow('MediaPipe Hands', image)
             if cv2.waitKey(5) & 0xFF == 27:
                 break
     cap.release()
 
+def get_all_point_of_hands(
+    mp_hands, 
+    hand_landmarks, 
+    image_width, 
+    image_height,
+):
+    hand_dict = {}
+    
+    hand_dict['thumb'] = {}
+    hand_dict['thumb']['thumb_cmc'] = (hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_CMC].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_CMC].y * image_height) #Renamed for easy parsing
+    hand_dict['thumb']['thumb_mcp'] = (hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_MCP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_MCP].y * image_height)
+    hand_dict['thumb']['thumb_ip']  = (hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_IP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_IP].y * image_height)
+    hand_dict['thumb']['thumb_tip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.THUMB_TIP].y * image_height)
+
+    hand_dict['index_finger'] = {}
+    hand_dict['index_finger']['index_finger_mcp'] = (hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP].y * image_height)
+    hand_dict['index_finger']['index_finger_pip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_PIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_PIP].y * image_height)
+    hand_dict['index_finger']['index_finger_dip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_DIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_DIP].y * image_height)
+    hand_dict['index_finger']['index_finger_tip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP].y * image_height)
+
+    hand_dict['wrist'] = {}
+    hand_dict['wrist']['wrist_mcp'] = (hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].y * image_height)
+
+    hand_dict['middle_finger'] = {}
+    hand_dict['middle_finger']['middle_finger_mcp'] = (hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_MCP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_MCP].y * image_height)
+    hand_dict['middle_finger']['middle_finger_pip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_PIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_PIP].y * image_height)
+    hand_dict['middle_finger']['middle_finger_dip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_DIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_DIP].y * image_height)
+    hand_dict['middle_finger']['middle_finger_tip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP].y * image_height)
+
+    hand_dict['ring_finger'] = {}
+    hand_dict['ring_finger']['ring_finger_mcp'] = (hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_MCP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_MCP].y * image_height)
+    hand_dict['ring_finger']['ring_finger_pip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_PIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_PIP].y * image_height)
+    hand_dict['ring_finger']['ring_finger_dip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_DIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_DIP].y * image_height)
+    hand_dict['ring_finger']['ring_finger_tip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_TIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_TIP].y * image_height)
+    
+    hand_dict['pinky_finger'] = {}
+    hand_dict['pinky_finger']['pinky_finger_mcp'] = (hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_MCP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_MCP].y * image_height)
+    hand_dict['pinky_finger']['pinky_finger_pip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_PIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_PIP].y * image_height)
+    hand_dict['pinky_finger']['pinky_finger_dip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_DIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_DIP].y * image_height)
+    hand_dict['pinky_finger']['pinky_finger_tip'] = (hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP].y * image_height)
+
+    return hand_dict
+
+def get_thumb_direction(
+    hand_dict,
+    vertical_threshold = 2,
+    horizontal_threshold = 0.8,
+    ):
+    thump_cmc = hand_dict['thumb']['thumb_cmc']
+    thump_mcp = hand_dict['thumb']['thumb_mcp']
+    thump_ip  = hand_dict['thumb']['thumb_ip']
+    thump_tip = hand_dict['thumb']['thumb_tip']
+
+    thump_points = [thump_cmc, thump_mcp, thump_ip, thump_tip]
+
+    if are_points_inside_polygon([thump_tip, thump_ip], hand_dict, 'thumb'):
+        return 0, ''
+
+    x = [p[0] for p in thump_points]
+    x = np.array(x).reshape((-1,1))
+    y = [p[1] for p in thump_points]
+    reg = LinearRegression(fit_intercept=True).fit(x, np.array(y))
+    slope = reg.coef_[0]
+
+    order = ''
+    if slope > vertical_threshold or slope < -vertical_threshold:
+        if thump_tip[1] > thump_cmc[1]:
+            order += '|down'
+        elif thump_tip[1] < thump_cmc[1]:
+            order += '|up'
+            
+    
+    if slope < horizontal_threshold and slope > -horizontal_threshold:
+        if thump_tip[0] < thump_cmc[0]:
+            order += '|left'
+        elif thump_tip[1] < thump_cmc[1]:
+            order += '|right'
+
+    # print('thumb', slope, order)
+    return order
+
+def get_index_finger_direction(
+    hand_dict, 
+    vertical_threshold = 2,
+    horizontal_threshold = 0.8,
+    ):
+
+    # wrist = (hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].x * image_width, hand_landmarks.landmark[mp_hands.HandLandmark.WRIST].y * image_height)
+    index_mcp = hand_dict['index_finger']['index_finger_mcp']
+    index_pip = hand_dict['index_finger']['index_finger_pip']
+    index_dip = hand_dict['index_finger']['index_finger_dip']
+    index_tip = hand_dict['index_finger']['index_finger_tip']
+
+    if are_points_inside_polygon([index_tip, index_pip], hand_dict, 'index_finger'):
+        return 0, ''
+
+    index_points = [index_mcp, index_pip, index_dip, index_tip]
+    x = [p[0] for p in index_points]
+    x = np.array(x).reshape((-1,1))
+    y = [p[1] for p in index_points]
+    reg = LinearRegression(fit_intercept=True).fit(x, np.array(y))
+    slope = reg.coef_[0]
+
+    order = ''
+    if slope > vertical_threshold or slope < -vertical_threshold:
+        if index_tip[1] > index_mcp[1]:
+            order += '|down'
+        elif index_tip[1] < index_mcp[1]:
+            order += '|up'
+    
+    if slope < horizontal_threshold and slope > -horizontal_threshold:
+        if index_tip[0] < index_mcp[0]:
+            order += '|left'
+        elif index_tip[1] < index_mcp[1]:
+            order += '|right'
+
+    # print('index', slope, order)
+    return order
+
+def get_extreme(hand_dict, ref_finger):
+    hand_points = []
+    for key in [x for x in hand_dict.keys() if x != ref_finger]:
+        hand_points.extend([coords for coords in hand_dict[key].values()])
+
+    hand_x = [point[0] for point in hand_points]
+    hand_y = [point[1] for point in hand_points]
+
+    left_most, right_most = np.argmin(hand_x), np.argmax(hand_x)
+    top, bottom = np.argmin(hand_y), np.argmax(hand_y)
+
+    left_most, right_most = hand_points[left_most], hand_points[right_most]
+    top, bottom = hand_points[top], hand_points[bottom]
+
+    return [left_most, top, right_most, bottom]
+
+def are_points_inside_polygon(points_to_check, hand_dict, ref_finger):
+    extreme_points = get_extreme(hand_dict, ref_finger)  
+    polygon = [[int(point[0]), int(point[1])] for point in extreme_points]
+    path = mpltPath.Path(polygon)
+    
+    is_inside = path.contains_points(points_to_check)
+    
+    print(is_inside)
+    return True in is_inside
+
 def main():
-    inputs = glob.glob(f'sample_input/*')
-    image_handpose(inputs)
+    
+    #Image inference
+    # image_handpose(glob.glob(f'sample_input/*'))
+    
+    #Webcam inference
+    # webcam_handpose()
+
     pass
 
 if __name__ == '__main__':

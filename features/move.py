@@ -13,6 +13,10 @@ class Controls(object):
     """
 
     def __init__(self):
+
+        self.height = 720
+        self.width = 960
+
         # Init pygame
         pygame.init()
 

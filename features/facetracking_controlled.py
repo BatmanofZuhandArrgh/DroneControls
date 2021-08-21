@@ -19,15 +19,6 @@ class FaceTracker(Controls):
 
     def __init__(self):
         super(FaceTracker, self).__init__()
-        self.area_to_stabilize = (25000, 30000)
-        self.height = 720
-        self.width = 960
-
-        self.upper_limit = int(self.height//3)
-        self.lower_limit = self.upper_limit * 2
-        
-        self.rightmost_limit = int(self.width//3)
-        self.leftmost_limit = self.rightmost_limit*2
         
     def run(self):
         self.start_up()
