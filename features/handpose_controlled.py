@@ -5,6 +5,7 @@ import mediapipe as mp
 import numpy as np
 import matplotlib.path as mpltPath
 from sklearn.linear_model import LinearRegression
+import time
 
 from move import Controls
 
@@ -77,10 +78,11 @@ class HandPoseControl(Controls):
 
                     order = get_index_finger_direction(hand_dict)
                     order += get_thumb_direction(hand_dict)
+                    order += get_ringmid_direction(hand_dict)
 
                     if('down' in order):
                         self.up_down_velocity = -self.S
-                    elif('up' > order):
+                    elif('up' in order):
                         self.up_down_velocity = self.S
                     else:
                         self.up_down_velocity = 0
@@ -92,20 +94,20 @@ class HandPoseControl(Controls):
                     else:
                         self.left_right_velocity = 0
                         
-
-                    # #Control forward and backward
-                    # if(m2n_distance > MOUTH2NOSE_DISTANCE_THRESHOLD[1]):
-                    #     self.for_back_velocity = -self.S
-                    # elif(m2n_distance < MOUTH2NOSE_DISTANCE_THRESHOLD[0]):
-                    #     self.for_back_velocity = self.S
-                    # else:
-                    #     self.for_back_velocity = 0
+                    # Control forward and backward
+                    if('backwards' in order):
+                        self.for_back_velocity = -self.S
+                    elif('forwards' in order):
+                        self.for_back_velocity = self.S
+                    else:
+                        self.for_back_velocity = 0
 
                     cv2.putText(img = frame, text = '|'.join(order), 
                         org = (30,15), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
                         fontScale = 1,color = (0, 0, 255), thickness = 1)
                 else:
                     print('stationary')
+                    self.stationary()
 
             self.update()
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -192,7 +194,7 @@ def webcam_handpose():
             print('--------------------------')
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
-                    print(len(hand_landmarks))
+    
                     mp_drawing.draw_landmarks(
                         image, hand_landmarks, mp_hands.HAND_CONNECTIONS,
                         drawing_styles.get_default_hand_landmark_style(),
@@ -201,6 +203,9 @@ def webcam_handpose():
                 hand_dict = get_all_point_of_hands(mp_hands, hand_landmarks, image_width, image_height)
                 get_index_finger_direction(hand_dict)
                 get_thumb_direction(hand_dict)
+                get_ringmid_direction(hand_dict)
+
+
             cv2.imshow('MediaPipe Hands', image)
             if cv2.waitKey(5) & 0xFF == 27:
                 break
@@ -249,6 +254,31 @@ def get_all_point_of_hands(
 
     return hand_dict
 
+def get_angle_fingerVSox(
+    finger,
+    hand_dict,
+):
+    finger_points = [(int(value[0]), int(value[1])) for value in hand_dict[finger].values()]
+    x = [point[0] for point in finger_points]
+    x = np.array(x).reshape((-1,1))
+    y = [point[1] for point in finger_points] 
+
+    
+    reg = LinearRegression(fit_intercept=True).fit(x, np.array(y))
+    slope = reg.coef_[0]
+    angle = np.arctan(slope) * 180 / np.pi 
+    return angle if angle > 0 else 180 + angle
+
+def get_angle_fingerVSfinger(
+    finger0,
+    finger1,
+    hand_dict,
+):
+    angle0 = get_angle_fingerVSox(finger0, hand_dict)
+    angle1 = get_angle_fingerVSox(finger1, hand_dict)
+    # print(angle0 - angle1)
+    return abs(angle0 - angle1)
+
 def get_thumb_direction(
     hand_dict,
     vertical_threshold = 2,
@@ -276,13 +306,16 @@ def get_thumb_direction(
             order += '|down'
         elif thump_tip[1] < thump_cmc[1]:
             order += '|up'
+        else:
+            order += '|stable_horizontal'
             
-    
     if slope < horizontal_threshold and slope > -horizontal_threshold:
         if thump_tip[0] < thump_cmc[0]:
             order += '|left'
         elif thump_tip[1] < thump_cmc[1]:
             order += '|right'
+        else:
+            order += '|stable_vertical'
 
     # print('thumb', slope, order)
     return order
@@ -315,12 +348,16 @@ def get_index_finger_direction(
             order += '|down'
         elif index_tip[1] < index_mcp[1]:
             order += '|up'
+        else:
+            order += '|stable_horizontal'
     
     if slope < horizontal_threshold and slope > -horizontal_threshold:
         if index_tip[0] < index_mcp[0]:
             order += '|left'
         elif index_tip[1] < index_mcp[1]:
             order += '|right'
+        else:
+            order += '|stable_vertical'
 
     # print('index', slope, order)
     return order
@@ -348,16 +385,29 @@ def are_points_inside_polygon(points_to_check, hand_dict, ref_finger):
     
     is_inside = path.contains_points(points_to_check)
     
-    print(is_inside)
     return True in is_inside
 
+def get_ringmid_direction(
+    hand_dict, 
+    lower_angle_threshold = 20,
+    upper_angle_threshold = 30,
+    ):
+    diff_angle = get_angle_fingerVSfinger('middle_finger', 'ring_finger', hand_dict)
+    if diff_angle > lower_angle_threshold and diff_angle < upper_angle_threshold:
+        if hand_dict['middle_finger']['middle_finger_tip'][0] <= hand_dict['ring_finger']['ring_finger_tip'][0]:
+            return '|backwards'
+        elif hand_dict['middle_finger']['middle_finger_tip'][0] > hand_dict['ring_finger']['ring_finger_tip'][0]:
+            return '|forwards'
+    else:
+        return '!stable_depth'
+    
 def main():
     
     #Image inference
     # image_handpose(glob.glob(f'sample_input/*'))
     
     #Webcam inference
-    # webcam_handpose()
+    webcam_handpose()
 
     pass
 

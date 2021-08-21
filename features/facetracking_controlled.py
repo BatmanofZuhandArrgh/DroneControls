@@ -55,7 +55,7 @@ class FaceTracker(Controls):
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
             with mp_face_detection.FaceDetection(
-                model_selection=0, min_detection_confidence=0.5) as face_detection:
+                model_selection=0, min_detection_confidence=0.8) as face_detection:
 
                 # Flip the image horizontally for a later selfie-view display, and convert
                 # the BGR image to RGB.
@@ -139,6 +139,7 @@ class FaceTracker(Controls):
                             fontScale = 1,color = (0, 0, 255), thickness = 1)
                 else:
                     print('stationary')
+                    self.stationary()
 
             self.update()
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
