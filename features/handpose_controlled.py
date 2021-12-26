@@ -42,6 +42,7 @@ class HandPoseControl(Controls):
                     elif event.key == pygame.K_l:  # land
                         self.tello.land()
                         self.send_rc_control = False
+                        should_stop = True
             
             if frame_read.stopped:
                 break
