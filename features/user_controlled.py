@@ -47,7 +47,8 @@ class UserControls(Controls):
             self.screen.fill([0, 0, 0])
 
             frame = frame_read.frame
-            
+            frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+
             self.show_battery(frame)
             self.preproc_frame(frame)
 

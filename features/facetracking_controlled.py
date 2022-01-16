@@ -1,15 +1,20 @@
+from turtle import width
 import cv2
 import pygame
 import time
 import numpy as np
 
+import torch
+
 from move import Controls
+from utils import draw_bbox, plot_landmarks
 
-import mediapipe as mp
-mp_face_detection = mp.solutions.face_detection
-mp_drawing = mp.solutions.drawing_utils
+from facenet_pytorch import MTCNN
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+mtcnn = MTCNN(keep_all=True, device=device)
 
-MOUTH2NOSE_DISTANCE_THRESHOLD = [35, 45] #pixels
+CONF_THRESHOLD = 0.75
+DISTANCE_THRESHOLD = (30,10)
 
 class FaceTracker(Controls):
     """ 
@@ -18,7 +23,7 @@ class FaceTracker(Controls):
 
     def __init__(self):
         super(FaceTracker, self).__init__()
-        self.S = 25
+        self.S = 30
         self.max_S = 50
 
     def run(self):
@@ -48,99 +53,104 @@ class FaceTracker(Controls):
 
             self.screen.fill([0, 0, 0])
             frame = frame_read.frame                
+            frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+            height, width, _ = frame.shape
 
-            with mp_face_detection.FaceDetection(
-                model_selection=0, min_detection_confidence=0.6) as face_detection:
+            image_array = np.array(frame, dtype=np.float32)
+            bounding_boxes, conf, landmarks = mtcnn.detect(frame, landmarks=True) 
 
-                # Flip the image horizontally for a later selfie-view display, and convert
-                # the BGR image to RGB.
-                frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
-                # To improve performance, optionally mark the image as not writeable to
-                # pass by reference.
-                frame.flags.writeable = False
-                height, width, shape = frame.shape
-                results = face_detection.process(frame)
+            if bounding_boxes is not None:
+                areas = []
+                new_bboxes = []
+                # new_conf = []
+                # new_landmarks = []
 
-                # Draw the face detection annotations on the image.
-                # image.flags.writeable = True
-                if results.detections:
-                    for detection in results.detections:
-                        mp_drawing.draw_detection(frame, detection)
+                for index in range(len(bounding_boxes)):
+                    if conf[index] > CONF_THRESHOLD:
+                        x1, y1, x2, y2 = bounding_boxes[index]
+                        areas.append(abs((x1 - x2)*(y2 - y1)))
+                        new_bboxes.append(bounding_boxes[index])
+                        # new_conf.append(conf[index])
+                        # new_landmarks.append(landmarks[index])
+                if(len(new_bboxes) == 0): break
+                max_index = np.argmax(areas)
+            
+                bounding_boxes = [new_bboxes[max_index]]
+                # conf = [new_conf[max_index]]
+                # landmarks = [new_landmarks[max_index]]
 
-                        nose_x = mp_face_detection.get_key_point(
-                            detection, mp_face_detection.FaceKeyPoint.NOSE_TIP).x * width
-                        nose_y = mp_face_detection.get_key_point(
-                            detection, mp_face_detection.FaceKeyPoint.NOSE_TIP).y * height
+                frame = draw_bbox(bounding_boxes, frame)
 
-                        mouth_x = mp_face_detection.get_key_point(
-                            detection, mp_face_detection.FaceKeyPoint.MOUTH_CENTER).x * width
-                        mouth_y = mp_face_detection.get_key_point(
-                            detection, mp_face_detection.FaceKeyPoint.MOUTH_CENTER).y * height
-                        
-                        output_text = []
+                # plot the facial landmarks
+                # image_array = plot_landmarks(landmarks, image_array)
+                
+                center =((bounding_boxes[0][0] + bounding_boxes[0][2])//2, (bounding_boxes[0][1] + bounding_boxes[0][3])//2)
+                cv2.circle(frame, 
+                        (int(center[0]),int(center[1]) ),
+                        2, (0, 0, 255), -1, cv2.LINE_AA)
 
-                        #mouth to nose distance
-                        m2n_distance = np.sqrt(np.square(mouth_x - nose_x) + np.square(mouth_y - nose_y))
-                    
-                        #Control up and down
-                        upper_limit = int(height/2.5)
-                        lower_limit = height - upper_limit
-                        height_range = upper_limit # one third of the full height
-                        cv2.line(frame, (0,upper_limit),(width, upper_limit), (255, 0, 0), 1, 1)
-                        cv2.line(frame, (0,lower_limit),(width, lower_limit), (255, 0, 0), 1, 1)
-                        
-                        if(nose_y < upper_limit):
-                            output_text.append('up')
-                            absolute_distance = abs(nose_y - upper_limit)
-                            self.up_down_velocity = self.get_pid_velocity(distance_range=height_range, curr_distance=absolute_distance)
-                        elif(nose_y > lower_limit):
-                            output_text.append('down')
-                            absolute_distance = abs(nose_y - lower_limit)
-                            self.up_down_velocity = -self.get_pid_velocity(distance_range=height_range, curr_distance=absolute_distance)
-                        else:
-                            output_text.append('stable_horizontal')
-                            self.up_down_velocity = 0
-
-                        #Control right and left
-                        rightmost_limit = int(width/2.5)
-                        leftmost_limit =  width - rightmost_limit
-                        width_range = rightmost_limit
-                        cv2.line(frame, (rightmost_limit, 0),(rightmost_limit, height), (255, 0, 0), 1, 1)
-                        cv2.line(frame, (leftmost_limit, 0),(leftmost_limit, height), (255, 0, 0), 1, 1)
-
-                        if(nose_x < rightmost_limit):
-                            output_text.append('move_right')
-                            absolute_distance = abs(nose_x - rightmost_limit)
-                            self.left_right_velocity = self.get_pid_velocity(distance_range=width_range, curr_distance=absolute_distance)
-                        elif(nose_x > leftmost_limit):
-                            output_text.append('move_left')
-                            absolute_distance = abs(nose_x - leftmost_limit)
-                            self.left_right_velocity = -self.get_pid_velocity(distance_range=width_range, curr_distance=absolute_distance)
-                        else:
-                            output_text.append('stable_vertical')
-                            self.left_right_velocity = 0
-                        
-                        #Control forward and backward
-                        if(m2n_distance > MOUTH2NOSE_DISTANCE_THRESHOLD[1]):
-                            output_text.append('move_backwards')
-                            self.for_back_velocity = 0 #-self.S
-                        elif(m2n_distance < MOUTH2NOSE_DISTANCE_THRESHOLD[0]):
-                            output_text.append('move_forwards')
-                            self.for_back_velocity = 0# self.S
-                        else:
-                            output_text.append('stable_depth')
-                            self.for_back_velocity = 0
-
-                        # cv2.putText(img = frame, text = f'{m2n_distance}', 
-                        #     org = (15,15), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
-                        #     fontScale = 1,color = (0, 0, 255), thickness = 1)
-                        cv2.putText(img = frame, text = '|'.join(output_text), 
-                            org = (30,15), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
-                            fontScale = 1,color = (0, 0, 255), thickness = 1)
-                        print('|'.join(output_text))
+                #Control up and down
+                upper_limit = int(height/2.1)
+                lower_limit = height - upper_limit
+                height_range = upper_limit # one third of the full height
+                cv2.line(frame, (0,upper_limit),(width, upper_limit), (255, 0, 0), 1, 1)
+                cv2.line(frame, (0,lower_limit),(width, lower_limit), (255, 0, 0), 1, 1)
+                
+                nose_x, nose_y = center
+                output_text = []
+                if(nose_y < upper_limit):
+                    output_text.append('up')
+                    absolute_distance = abs(nose_y - upper_limit)
+                    self.up_down_velocity = self.get_pid_velocity(distance_range=height_range, curr_distance=absolute_distance)
+                elif(nose_y > lower_limit):
+                    output_text.append('down')
+                    absolute_distance = abs(nose_y - lower_limit)
+                    self.up_down_velocity = -self.get_pid_velocity(distance_range=height_range, curr_distance=absolute_distance)
                 else:
-                    print('stationary')
-                    self.stationary()
+                    output_text.append('stable_horizontal')
+                    self.up_down_velocity = 0
+
+                #Control right and left
+                rightmost_limit = int(width/2.5)
+                leftmost_limit =  width - rightmost_limit
+                width_range = rightmost_limit
+                cv2.line(frame, (rightmost_limit, 0),(rightmost_limit, height), (255, 0, 0), 1, 1)
+                cv2.line(frame, (leftmost_limit, 0),(leftmost_limit, height), (255, 0, 0), 1, 1)
+
+                if(nose_x < rightmost_limit):
+                    output_text.append('move_right')
+                    absolute_distance = abs(nose_x - rightmost_limit)
+                    self.left_right_velocity = self.get_pid_velocity(distance_range=width_range, curr_distance=absolute_distance)
+                elif(nose_x > leftmost_limit):
+                    output_text.append('move_left')
+                    absolute_distance = abs(nose_x - leftmost_limit)
+                    self.left_right_velocity = -self.get_pid_velocity(distance_range=width_range, curr_distance=absolute_distance)
+                else:
+                    output_text.append('stable_vertical')
+                    self.left_right_velocity = 0
+                
+                #Control forward and backward
+                face_height = abs(bounding_boxes[0][1] - bounding_boxes[0][3])
+                if(face_height > DISTANCE_THRESHOLD[1]):
+                    output_text.append('move_backwards')
+                    self.for_back_velocity = 0 #-self.S
+                elif(face_height < DISTANCE_THRESHOLD[0]):
+                    output_text.append('move_forwards')
+                    self.for_back_velocity = 0# self.S
+                else:
+                    output_text.append('stable_depth')
+                    self.for_back_velocity = 0
+
+                cv2.putText(img = frame, text = f'{face_height}', 
+                    org = (15,15), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
+                    fontScale = 1,color = (0, 0, 255), thickness = 1)
+                cv2.putText(img = frame, text = '|'.join(output_text), 
+                    org = (30,30), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
+                    fontScale = 1,color = (0, 0, 255), thickness = 1)
+                print('|'.join(output_text))
+            else:
+                print('stationary')
+                self.stationary()
            
             self.show_battery(frame)
             self.update()
@@ -157,129 +167,56 @@ class FaceTracker(Controls):
         # The velocity would be a ratioed of the maximum velocity, 
         # with the same ratio between the distance to the border to the max distance
         
-        return int(curr_distance/distance_range * self.max_S)
+        return int(curr_distance/distance_range * self.max_S) + 2
 
 def webcam_findFace():
     cap = cv2.VideoCapture(0)
-    with mp_face_detection.FaceDetection(
-        model_selection=0, min_detection_confidence=0.5) as face_detection:
-        while cap.isOpened():
-            success, image = cap.read()
-            if not success:
-                print("Ignoring empty camera frame.")
-                # If loading a video, use 'break' instead of 'continue'.
-                continue
 
-            # Flip the image horizontally for a later selfie-view display, and convert
-            # the BGR image to RGB.
-            image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
-            # To improve performance, optionally mark the image as not writeable to
-            # pass by reference.
-            image.flags.writeable = False
-            height, width, shape = image.shape
-            results = face_detection.process(image)
+    while cap.isOpened():
+        success, image = cap.read()
+        if not success:
+            print("Ignoring empty camera frame.")
+            # If loading a video, use 'break' instead of 'continue'.
+            continue
 
-            # Draw the face detection annotations on the image.
-            image.flags.writeable = True
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        image_array = np.array(image, dtype=np.float32)
+        bounding_boxes, conf, landmarks = mtcnn.detect(image, landmarks=True)        
 
-            if results.detections:
-                for detection in results.detections:
-                    mp_drawing.draw_detection(image, detection)
+        if bounding_boxes is not None:
+            areas = []
+            new_bboxes = []
+            # new_conf = []
+            # new_landmarks = []
 
-                    nose_x = mp_face_detection.get_key_point(
-                        detection, mp_face_detection.FaceKeyPoint.NOSE_TIP).x * width
-                    nose_y = mp_face_detection.get_key_point(
-                        detection, mp_face_detection.FaceKeyPoint.NOSE_TIP).y * height
+            for index, bounding_box in enumerate(bounding_boxes):
+                if conf[index] > CONF_THRESHOLD:
+                    x1, y1, x2, y2 = bounding_boxes[index]
+                    areas.append(abs((x1 - x2)*(y2 - y1)))
+                    new_bboxes.append(bounding_boxes[index])
+                    # new_conf.append(conf[index])
+                    # new_landmarks.append(landmarks[index])
+            if(len(new_bboxes) == 0): break
+            max_index = np.argmax(areas)
+            
+            bounding_boxes = [new_bboxes[max_index]]
+            # conf = [new_conf[max_index]]
+            # landmarks = [new_landmarks[max_index]]
 
-                    mouth_x = mp_face_detection.get_key_point(
-                        detection, mp_face_detection.FaceKeyPoint.MOUTH_CENTER).x * width
-                    mouth_y = mp_face_detection.get_key_point(
-                        detection, mp_face_detection.FaceKeyPoint.MOUTH_CENTER).y * height
+            image_array = draw_bbox(bounding_boxes, image_array)
 
-                    #mouth to nose distance
-                    m2n_distance = np.sqrt(np.square(mouth_x - nose_x) + np.square(mouth_y - nose_y))
+            # plot the facial landmarks
+            # image_array = plot_landmarks(landmarks, image_array)
+            
+            center =((bounding_boxes[0][0] + bounding_boxes[0][2])//2, (bounding_boxes[0][1] + bounding_boxes[0][3])//2)
+            cv2.circle(image_array, 
+                      (int(center[0]),int(center[1]) ),
+                      2, (0, 0, 255), -1, cv2.LINE_AA)
 
-                    cv2.putText(img = image, text = f'{m2n_distance}', 
-                        org = (30,30), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
-                        fontScale = 1,color = (0, 0, 255), thickness = 1)
-                
-                    #Control up and down
-                    upper_limit = int(height/3)
-                    lower_limit = int(height/3)*2
-                    cv2.line(image, (0,upper_limit),(width, upper_limit), (255, 0, 0), 1, 1)
-                    cv2.line(image, (0,lower_limit),(width, lower_limit), (255, 0, 0), 1, 1)
-                    
-                    if(nose_y < upper_limit):
-                        print('down')
-                    elif(nose_y > lower_limit):
-                        print('up')
+        cv2.imshow('MediaPipe Face Detection', image_array/255.0)
+        if cv2.waitKey(5) & 0xFF == 27:
+            break
 
-                    #Control right and left
-                    rightmost_limit = int(width/3)
-                    leftmost_limit =  int(width/3) * 2
-                    cv2.line(image, (rightmost_limit, 0),(rightmost_limit, height), (255, 0, 0), 1, 1)
-                    cv2.line(image, (leftmost_limit, 0),(leftmost_limit, height), (255, 0, 0), 1, 1)
-
-                    if(nose_x < rightmost_limit):
-                        print('move_left')
-                    elif(nose_x > leftmost_limit):
-                        print('move_right')
-
-                    #Control forward and backward
-                    if(m2n_distance > MOUTH2NOSE_DISTANCE_THRESHOLD[1]):
-                        print('move backwards')
-                    elif(m2n_distance < MOUTH2NOSE_DISTANCE_THRESHOLD[0]):
-                        print('move forwards')
-                    else:
-                        print('stationary')
-                
-            cv2.imshow('MediaPipe Face Detection', image)
-            if cv2.waitKey(5) & 0xFF == 27:
-                break
     cap.release()
-
-'''
-def findFace(img, mode = 'CascadeClassifier'):
-    if mode == 'CascadeClassifier':
-        faceCascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        imgGray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        faces = faceCascade.detectMultiScale(imgGray, 1.2, 8)
-    elif mode == 'BlazeFace':
-        with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5) as face_detection:
-            # Convert the BGR image to RGB and process it with MediaPipe Face Detection
-            results = face_detection.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-
-            # Draw face detections of each face.
-            if not results.detections:
-                return img, [[0,0], [0]]
-            annotated_image = img.copy()
-            for detection in results.detections:
-                print('Nose tip:')
-                print(mp_face_detection.get_key_point(
-                detection, mp_face_detection.FaceKeyPoint.NOSE_TIP))
-                mp_drawing.draw_detection(annotated_image, detection)
-    else:
-        faces = []
-
-    face_list = []
-    face_area_list = []
-
-    for (x, y, w, h) in faces:
-        cv2.rectangle(img, (x,y), (x+w, y+h), (0,0,255), 2)
-        cx = x + w // 2
-        cy = y + h // 2
-        area = w*h
-        face_list.append([cx, cy])
-        face_area_list.append(area)
-
-    if len(face_list) != 0:
-        i = face_area_list.index(max(face_area_list))
-        return img, [face_list[i], face_area_list[i]]
-
-    else:
-        return img, [[0,0], [0]]
-    '''
 
 def main():
     controls = FaceTracker()
