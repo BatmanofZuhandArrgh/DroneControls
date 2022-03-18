@@ -96,7 +96,6 @@ class HandPoseControl(Controls):
                             self.tello.land()
                             self.send_rc_control = False
                             should_stop = True
-                            break
 
                         #Only takes order once every 1/2 seconds (software and model running at 30FPS)
                         if('down' in order_queue):
@@ -121,7 +120,6 @@ class HandPoseControl(Controls):
                         else:
                             self.for_back_velocity = 0
 
- 
                         order_queue = ''
                     else:
                         print('stationary')
