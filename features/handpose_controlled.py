@@ -20,6 +20,7 @@ class HandPoseControl(Controls):
 
     def __init__(self):
         super(HandPoseControl, self).__init__()
+        self.S = 25
 
     def run(self):
         self.start_up()
@@ -54,7 +55,9 @@ class HandPoseControl(Controls):
             text = "Battery: {}%".format(self.tello.get_battery())
             cv2.putText(frame, text, (5, 720 - 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
+            
+            order_queue = ''
+            order_acceptance_count = 0
             with mp_hands.Hands(
                 max_num_hands = 1,
                 min_detection_confidence=0.5,
@@ -76,36 +79,42 @@ class HandPoseControl(Controls):
                     hand_landmarks = results.multi_hand_landmarks[0]
                     hand_dict = get_all_point_of_hands(mp_hands, hand_landmarks, image_width, image_height)
                     order = get_index_finger_direction(hand_dict)
-                    print('oorder:', order)
+                    print('order:', order)
 
-                    # print(get_thumb_direction(hand_dict))
-                    # print(get_ringmid_direction(hand_dict))
+                    order_queue = order_queue + order
+                    order_acceptance_count += 1
 
-                    if('down' in order):
-                        self.up_down_velocity = -self.S
-                    elif('up' in order):
-                        self.up_down_velocity = self.S
+                    if order_acceptance_count % 5 == 0:     
+                        #Only takes order once every 1/6 seconds (software and model running at 30FPS)
+                        if('down' in order_queue):
+                            self.up_down_velocity = -self.S
+                        elif('up' in order_queue):
+                            self.up_down_velocity = self.S
+                        else:
+                            self.up_down_velocity = 0
+
+                        if('left' in order_queue):
+                            self.left_right_velocity = self.S
+                        elif('right' in order_queue):
+                            self.left_right_velocity = -self.S
+                        else:
+                            self.left_right_velocity = 0
+                            
+                        # Control forward and backward
+                        if('backwards' in order_queue):
+                            self.for_back_velocity = -self.S
+                        elif('forwards' in order_queue):
+                            self.for_back_velocity = self.S
+                        else:
+                            self.for_back_velocity = 0
+
+                        # cv2.putText(img = frame, text = '|'.join(order_queue), 
+                        #     org = (30,15), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
+                        #     fontScale = 1,color = (0, 0, 255), thickness = 1)
+                        order_queue = ''
                     else:
-                        self.up_down_velocity = 0
-
-                    if('left' in order):
-                        self.left_right_velocity = self.S
-                    elif('right' in order):
-                        self.left_right_velocity = -self.S
-                    else:
-                        self.left_right_velocity = 0
-                        
-                    # Control forward and backward
-                    if('backwards' in order):
-                        self.for_back_velocity = -self.S
-                    elif('forwards' in order):
-                        self.for_back_velocity = self.S
-                    else:
-                        self.for_back_velocity = 0
-
-                    cv2.putText(img = frame, text = '|'.join(order), 
-                        org = (30,15), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
-                        fontScale = 1,color = (0, 0, 255), thickness = 1)
+                        print('stationary')
+                        self.stationary()
                 else:
                     print('stationary')
                     self.stationary()
@@ -215,11 +224,11 @@ def main():
     # image_handpose(glob.glob(f'sample_input/*'))
     
     #Webcam inference
-    # webcam_handpose()
+    webcam_handpose()
 
     #Drone inference
-    controls = HandPoseControl()
-    controls.run()
+    # controls = HandPoseControl()
+    # controls.run()
 
 if __name__ == '__main__':
     main()
