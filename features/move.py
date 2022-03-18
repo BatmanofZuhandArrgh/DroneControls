@@ -2,6 +2,7 @@ from djitellopy import Tello
 import pygame
 import cv2
 import numpy as np
+import random
 
 class Controls(object):
     """ Maintains the Tello display and moves it through the keyboard keys.
@@ -132,6 +133,11 @@ class Controls(object):
         frame = pygame.surfarray.make_surface(frame)
         self.screen.blit(frame, (0, 0))
         pygame.display.update()
+
+    def flip(self):
+        choices = ['l', 'r', 'f', 'b']
+        flip_direction = random.choice(choices)
+        self.tello.flip(flip_direction)
 
 def main():
     frontend = Controls()

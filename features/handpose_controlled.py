@@ -8,7 +8,10 @@ from move import Controls
 from handpose import (get_index_finger_direction, 
                     get_ringmid_direction, 
                     get_thumb_direction,
-                    get_all_point_of_hands,)
+                    get_all_point_of_hands,
+                    get_ringmid_direction,
+                    handGesture_rockNroll,
+                    handGesture_mockingJay)
 
 mp_drawing = mp.solutions.drawing_utils
 mp_hands = mp.solutions.hands
@@ -20,7 +23,6 @@ class HandPoseControl(Controls):
 
     def __init__(self):
         super(HandPoseControl, self).__init__()
-        self.S = 25
 
     def run(self):
         self.start_up()
@@ -28,6 +30,7 @@ class HandPoseControl(Controls):
         frame_read = self.tello.get_frame_read()
 
         should_stop = False
+        order_acceptance_count = 0
         while not should_stop:
 
             for event in pygame.event.get():
@@ -57,7 +60,6 @@ class HandPoseControl(Controls):
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
             
             order_queue = ''
-            order_acceptance_count = 0
             with mp_hands.Hands(
                 max_num_hands = 1,
                 min_detection_confidence=0.5,
@@ -79,13 +81,24 @@ class HandPoseControl(Controls):
                     hand_landmarks = results.multi_hand_landmarks[0]
                     hand_dict = get_all_point_of_hands(mp_hands, hand_landmarks, image_width, image_height)
                     order = get_index_finger_direction(hand_dict)
+                    
+                    mockingJay = handGesture_mockingJay(hand_dict)
                     print('order:', order)
 
                     order_queue = order_queue + order
                     order_acceptance_count += 1
 
-                    if order_acceptance_count % 5 == 0:     
-                        #Only takes order once every 1/6 seconds (software and model running at 30FPS)
+                    if order_acceptance_count % 2 == 0:     
+                        if handGesture_rockNroll(hand_dict):
+                            self.flip()
+
+                        if handGesture_mockingJay(hand_dict):
+                            self.tello.land()
+                            self.send_rc_control = False
+                            should_stop = True
+                            break
+
+                        #Only takes order once every 1/2 seconds (software and model running at 30FPS)
                         if('down' in order_queue):
                             self.up_down_velocity = -self.S
                         elif('up' in order_queue):
@@ -108,9 +121,7 @@ class HandPoseControl(Controls):
                         else:
                             self.for_back_velocity = 0
 
-                        # cv2.putText(img = frame, text = '|'.join(order_queue), 
-                        #     org = (30,15), fontFace = cv2.FONT_HERSHEY_SIMPLEX, 
-                        #     fontScale = 1,color = (0, 0, 255), thickness = 1)
+ 
                         order_queue = ''
                     else:
                         print('stationary')
@@ -208,10 +219,15 @@ def webcam_handpose():
                         image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
                 hand_dict = get_all_point_of_hands(mp_hands, hand_landmarks, image_width, image_height)
-                get_index_finger_direction(hand_dict)
-                get_thumb_direction(hand_dict)
-                get_ringmid_direction(hand_dict)
+                # get_index_finger_direction(hand_dict)
+                # get_thumb_direction(hand_dict)
+                # get_ringmid_direction(hand_dict)
+                # get_ringmid_direction(hand_dict)
+                rockNroll = handGesture_rockNroll(hand_dict)
+                mockingJay = handGesture_mockingJay(hand_dict)
 
+                print('rockNroll', rockNroll )
+                print('mockingJay', mockingJay)
             cv2.imshow('MediaPipe Hands', image)
             if cv2.waitKey(5) & 0xFF == 27:
                 break

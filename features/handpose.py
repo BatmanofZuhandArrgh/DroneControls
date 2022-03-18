@@ -71,6 +71,40 @@ def get_angle_fingerVSfinger(
     # print(angle0 - angle1)
     return abs(angle0 - angle1)
 
+def areParellel(finger0, finger1, hand_dict, threshold_angle_diff = 10):
+    angle0 = get_angle_fingerVSox(finger0,hand_dict)
+    angle1 = get_angle_fingerVSox(finger1,hand_dict)
+    
+    if abs(angle0 - angle1) <= threshold_angle_diff:
+        return True, angle0
+    return False, 0
+
+def areParallelandUpwards(finger0, finger1, hand_dict, threshold_angle_diff = 10):
+    ifParallel, angle0 = areParellel(finger0, finger1, hand_dict, threshold_angle_diff)
+    if ifParallel and abs(angle0 - 90) <= 2*threshold_angle_diff:
+        return True
+    return False
+
+def handGesture_mockingJay(hand_dict):
+    #If both pinky and index are not in the fist, check if they are parallel and upwards, return True
+    if  are_points_inside_polygon([hand_dict['index_finger']['index_finger_tip']], hand_dict, 'index_finger') or \
+        are_points_inside_polygon([hand_dict['middle_finger']['middle_finger_tip']], hand_dict, 'middle_finger') or \
+        are_points_inside_polygon([hand_dict['ring_finger']['ring_finger_tip']], hand_dict, 'ring_finger') or \
+        hand_dict['middle_finger']['middle_finger_tip'][1] > hand_dict['middle_finger']['middle_finger_pip'][1] or \
+        hand_dict['ring_finger']['ring_finger_tip'][1] > hand_dict['ring_finger']['ring_finger_pip'][1] or \
+        hand_dict['index_finger']['index_finger_tip'][1] > hand_dict['index_finger']['index_finger_pip'][1]:
+        return False
+    return areParallelandUpwards('ring_finger', 'index_finger', hand_dict) and areParallelandUpwards('middle_finger', 'index_finger', hand_dict)
+
+def handGesture_rockNroll(hand_dict):
+    #If both pinky and index are not in the fist, check if they are parallel and upwards, return True
+    if are_points_inside_polygon([hand_dict['pinky_finger']['pinky_finger_tip']], hand_dict, 'pinky_finger') or \
+        are_points_inside_polygon([hand_dict['index_finger']['index_finger_tip']], hand_dict, 'index_finger') or \
+        hand_dict['pinky_finger']['pinky_finger_tip'][1] > hand_dict['pinky_finger']['pinky_finger_dip'][1]:
+        return False
+    return areParallelandUpwards('pinky_finger', 'index_finger', hand_dict)
+
+
 def get_thumb_direction(
     hand_dict,
     vertical_threshold = 2,
@@ -190,5 +224,5 @@ def get_ringmid_direction(
         elif hand_dict['middle_finger']['middle_finger_tip'][0] > hand_dict['ring_finger']['ring_finger_tip'][0]:
             return '|forwards'
     else:
-        return '!stable_depth'
+        return '|stable_depth'
     
