@@ -1,0 +1,6 @@
+djitellopy
+pygame
+numpy
+opencv-python
+mediapipe
+scikit-learn
