@@ -138,7 +138,7 @@ class HandPoseControl(Controls):
             self.screen.blit(frame, (0, 0))
             pygame.display.update()
 
-            time.sleep(1 / self.FPS)
+            # time.sleep(1 / self.FPS) #Since the model run on 30FPS, it is already 1/30 seconds between every update to the drone
 
         self.tello.streamoff()
         # Call it always before finishing. To deallocate resources.

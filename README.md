@@ -28,7 +28,7 @@ By default, the direction of the index finger is used to map up, down, left, rig
 Rock and roll sign is used to command a random flip.
 Mockingjay sign is used to command land.
 
-Demo link: 
+Demo link: https://youtu.be/f_zY2lMWXZ8
 
 ## 3. Face tracking controls:
 Run 
